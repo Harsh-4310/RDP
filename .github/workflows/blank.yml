@@ -1,50 +1,73 @@
-# --- Define Character Arrays for Password Generation (Missing Lines) ---
-$CHARSET_LOWER  = 1
-$CHARSET_UPPER  = 2
-$CHARSET_NUMBER = 4
-$CHARSET_SYMBOL = 8
+name: Windows RDP with Tailscale
 
-# Define character sets using ASCII ranges
-$charsLower  = [char[]](97..122) 
-$charsUpper  = [char[]](65..90)
-$charsNumber = [char[]](48..57)
-# Special chars: !,%,*,:,;,<,=,>,?,@,[,,\,],^,_
-$charsSpecial = [char[]](33,37,42) + [char[]](58..64) + [char[]](91..96)
+on:
+  workflow_dispatch:
 
-# The password generation logic visible in the image
-$raw = @()
-$raw += $chars.Upper | Get-Random -Count 4
-$raw += $chars.Lower | Get-Random -Count 4
-$raw += $chars.Number | Get-Random -Count 4
-$raw += $chars.Special | Get-Random -Count 4
-$password = -join ($raw | Sort-Object {Get-Random})
-$SecurePass = ConvertTo-SecureString $password -AsPlainText -Force
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Set up RDP user
+        shell: pwsh
+        run: |
+          Write-Host "🔧 Creating RDP user..."
+          $password = [System.Web.Security.Membership]::GeneratePassword(16,3)
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          try {
+              New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+              Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+              echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+              Write-Host "✅ User 'RDP' created successfully."
+          } catch {
+              Write-Host "⚠️ Failed to create RDP user: $($_.Exception.Message)"
+          }
 
-# Create Local User and Add to RDP Group
-New-LocalUser -Name "RDP_PASSWORD" $SecurePass -AccountExpires | Out-Null -ErrorAction Stop
-Add-LocalGroupMember -Group "Administrators" -Member "RDP_PASSWORD" -ErrorAction Stop
-Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP_PASSWORD" -ErrorAction Stop
+      - name: Install Tailscale
+        shell: pwsh
+        run: |
+          Write-Host "📦 Installing Tailscale..."
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installer = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installer`"", "/quiet" -Wait
+          Remove-Item $installer -Force
+          Write-Host "✅ Tailscale installed successfully."
 
-# Output the password for use (e.g., in GitHub Actions)
-echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
-Write-Host "User 'RDP' created successfully."
-# Write-Host "Failed to create RDP user: $($_.Exception.Message)" (Error handling line visible in image)
+      - name: Connect to Tailscale
+        shell: pwsh
+        run: |
+          Write-Host "🔗 Connecting to Tailscale..."
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TS_AUTHKEY }}
+          
+          $tsIP = $null
+          for ($i=0; $i -lt 10; $i++) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              if ($tsIP) { break }
+              Start-Sleep -Seconds 5
+          }
 
-# --- Tailscale Installation Section (Visible in Image) ---
-- name: Install Tailscale
-  shell: pwsh
-  run: |
-    Write-Host "Installing Tailscale..."
-    $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-and64.msi"
-    $installer = "$env:TEMP\tailscale.msi"
-    Invoke-WebRequest -Uri $url -OutFile $installer
-    Start-Process msiexec.exe -ArgumentList "/i", "$installer", "/quiet" -Wait -NoNewWindow
-    Remove-Item $installer -Force
-    Write-Host "Tailscale installed successfully."
+          if (-not $tsIP) {
+              Write-Host "⚠️ Tailscale IP not found."
+              exit 0
+          }
 
-# --- Tailscale Connection Section (Visible in Image) ---
-- name: Connect to Tailscale
-  shell: pwsh
-  run: |
-    Write-Host "Connecting to Tailscale..."
-    & "C:\Program Files\Tailscale\tailscale.exe" up --auth-key=${secrets.TAILSCALE_AUTH_KEY}
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          Write-Host "✅ Connected. Tailscale IP: $tsIP"
+
+      - name: Show RDP Info
+        shell: pwsh
+        run: |
+          Write-Host "`n==============================="
+          Write-Host "💻 RDP Session Information"
+          Write-Host "Tailscale IP : $env:TAILSCALE_IP"
+          Write-Host "Username     : RDP"
+          Write-Host "Password     : $env:RDP_PASSWORD"
+          Write-Host "==============================="
+          Write-Host "⚡ Keep this runner open while using RDP."
+          Write-Host "⏹ Use Ctrl+C in Actions log to stop manually."
+
+          while ($true) {
+              Write-Host "[{0}] 🟢 RDP session active..." -f (Get-Date)
+              Start-Sleep -Seconds 300
+          }
