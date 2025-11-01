@@ -1,0 +1,50 @@
+# --- Define Character Arrays for Password Generation (Missing Lines) ---
+$CHARSET_LOWER  = 1
+$CHARSET_UPPER  = 2
+$CHARSET_NUMBER = 4
+$CHARSET_SYMBOL = 8
+
+# Define character sets using ASCII ranges
+$charsLower  = [char[]](97..122) 
+$charsUpper  = [char[]](65..90)
+$charsNumber = [char[]](48..57)
+# Special chars: !,%,*,:,;,<,=,>,?,@,[,,\,],^,_
+$charsSpecial = [char[]](33,37,42) + [char[]](58..64) + [char[]](91..96)
+
+# The password generation logic visible in the image
+$raw = @()
+$raw += $chars.Upper | Get-Random -Count 4
+$raw += $chars.Lower | Get-Random -Count 4
+$raw += $chars.Number | Get-Random -Count 4
+$raw += $chars.Special | Get-Random -Count 4
+$password = -join ($raw | Sort-Object {Get-Random})
+$SecurePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+# Create Local User and Add to RDP Group
+New-LocalUser -Name "RDP_PASSWORD" $SecurePass -AccountExpires | Out-Null -ErrorAction Stop
+Add-LocalGroupMember -Group "Administrators" -Member "RDP_PASSWORD" -ErrorAction Stop
+Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP_PASSWORD" -ErrorAction Stop
+
+# Output the password for use (e.g., in GitHub Actions)
+echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+Write-Host "User 'RDP' created successfully."
+# Write-Host "Failed to create RDP user: $($_.Exception.Message)" (Error handling line visible in image)
+
+# --- Tailscale Installation Section (Visible in Image) ---
+- name: Install Tailscale
+  shell: pwsh
+  run: |
+    Write-Host "Installing Tailscale..."
+    $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-and64.msi"
+    $installer = "$env:TEMP\tailscale.msi"
+    Invoke-WebRequest -Uri $url -OutFile $installer
+    Start-Process msiexec.exe -ArgumentList "/i", "$installer", "/quiet" -Wait -NoNewWindow
+    Remove-Item $installer -Force
+    Write-Host "Tailscale installed successfully."
+
+# --- Tailscale Connection Section (Visible in Image) ---
+- name: Connect to Tailscale
+  shell: pwsh
+  run: |
+    Write-Host "Connecting to Tailscale..."
+    & "C:\Program Files\Tailscale\tailscale.exe" up --auth-key=${secrets.TAILSCALE_AUTH_KEY}
