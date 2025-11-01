@@ -11,7 +11,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "🔧 Creating RDP user..."
-          $password = [System.Web.Security.Membership]::GeneratePassword(16,3)
+          $Add-Type -AssemblyName System.Security
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           try {
               New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
